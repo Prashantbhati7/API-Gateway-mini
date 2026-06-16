@@ -1,16 +1,20 @@
-
-
 export interface RateLimitConfig {
   windowMs: number;
   max: number;
   message: string;
 }
 
+export interface ServiceInstance {
+  url: string;
+  healthy: boolean;
+  failures: number;
+  lastFailureTime: number | null;
+}
 
 export interface RouteConfig {
   prefix: string;
   auth: boolean;
-  target: string[];
+  targets: ServiceInstance[];
   ratelimit?: RateLimitConfig;
 }
 

@@ -1,2 +1,2 @@
 
-export type { RouteConfig, RateLimitConfig, JwtUser } from './gateway.js';
+export type { RouteConfig, RateLimitConfig, JwtUser, ServiceInstance } from './gateway.js';
