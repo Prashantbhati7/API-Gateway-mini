@@ -4,17 +4,16 @@ export interface RateLimitConfig {
   message: string;
 }
 
-export interface ServiceInstance {
-  url: string;
-  healthy: boolean;
-  failures: number;
+export interface HealthState {
+  healthy:boolean;
+  failures:number;
   lastFailureTime: number | null;
 }
 
 export interface RouteConfig {
   prefix: string;
   auth: boolean;
-  targets: ServiceInstance[];
+  targets: string[];
   ratelimit?: RateLimitConfig;
 }
 

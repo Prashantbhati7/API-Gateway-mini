@@ -1,14 +1,15 @@
 import { Router } from 'express';
-import routes from '../config/rotes.js';
-import { startHealthPolling } from '../loadbalancer/healthManager.js';
+import routes from '../config/routes.js';
 import loggerMiddleware from '../middleware/logger.js';
 import authMiddleware from '../middleware/auth.js';
 import rateLimiter from '../middleware/rateLimiter.js';
 import proxyHandler from '../proxy/proxyHandler.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
+import { initializeHealth, startHealthPolling } from '../loadbalancer/healthManager.js';
 import '../types/gateway.js';
 
+initializeHealth(routes);
 startHealthPolling(routes);
 
 const gatewayRouter = Router();

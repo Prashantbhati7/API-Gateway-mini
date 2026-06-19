@@ -3,7 +3,7 @@ import type { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
 import { ApiError } from './utils/ApiError.js';
 import gatewayRouter from './services/gatewayService.js';
-import { getHealthSnapshot } from './loadbalancer/healthManager.js';
+import { getHealthSnapshot, startHealthPolling } from './loadbalancer/healthManager.js';
 
 dotenv.config();
 
@@ -13,15 +13,15 @@ const PORT = process.env['PORT'] ? Number(process.env['PORT']) : 3000;
 app.use(express.json());
 
 
-import routes from './config/rotes.js';
+import routes from './config/routes.js';
+import { getHealth } from './loadbalancer/healthManager.js';
 
 app.get('/gateway/health', (_req: Request, res: Response) => {
   const snapshot = getHealthSnapshot(routes);
   
-
   let isDegraded = false;
   for (const route of routes) {
-    if (route.targets.some(t => !t.healthy)) {
+    if (route.targets.some(url => !getHealth(url).healthy)) {
       isDegraded = true;
       break;
     }
