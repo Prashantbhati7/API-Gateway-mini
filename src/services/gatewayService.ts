@@ -9,10 +9,18 @@ import { ApiError } from '../utils/ApiError.js';
 import { initializeHealth, startHealthPolling } from '../loadbalancer/healthManager.js';
 import '../types/gateway.js';
 
+import { incrementMetric } from '../utils/metrics.js';
+
 initializeHealth(routes);
 startHealthPolling(routes);
 
 const gatewayRouter = Router();
+
+gatewayRouter.use((_req, _res, next) => {
+  incrementMetric('totalRequests');
+  next();
+});
+
 gatewayRouter.use(loggerMiddleware);
 
 gatewayRouter.use(

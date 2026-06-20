@@ -1,12 +1,5 @@
 const counters = new Map<string, number>();
 
-/**
- * Returns the next target URL in the rotation.
- * The caller must pass ONLY healthy target URLs to this function.
- * 
- * @param healthyTargets Array of target URLs (strings) that are currently healthy
- * @param prefix The route prefix (used as the counter key)
- */
 export const roundRobin = (healthyTargets: string[], prefix: string): string => {
   const total = healthyTargets.length;
 

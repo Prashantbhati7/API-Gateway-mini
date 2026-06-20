@@ -33,7 +33,20 @@ app.get('/gateway/health', (_req: Request, res: Response) => {
   });
 });
 
+import { getMetricsSnapshot } from './utils/metrics.js';
+import { getUnhealthyCount } from './loadbalancer/healthManager.js';
+
+app.get('/gateway/metrics', (_req: Request, res: Response) => {
+  res.json({
+    ...getMetricsSnapshot(),
+    unhealthyTargets: getUnhealthyCount(),
+  });
+});
+
 app.use('/', gatewayRouter);
+
+
+
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (res.headersSent) return;

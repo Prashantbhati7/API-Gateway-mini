@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { roundRobin } from '../loadbalancer/roundRobin.js';
 import { getHealth, recordSuccess, recordFailure } from '../loadbalancer/healthManager.js';
 import { ApiError } from '../utils/ApiError.js';
+import { incrementMetric } from '../utils/metrics.js';
 
 import { PROXY_TIMEOUT_MS } from '../config/other_Configs.js';
 
@@ -22,6 +23,7 @@ const proxyHandler = async (
   const healthyTargets = route.targets.filter((url) => getHealth(url).healthy);
 
   if (healthyTargets.length === 0) {
+    incrementMetric('failedRequests');
     return next(new ApiError(503, 'Service Unavailable: All upstream targets are down'));
   }
 
@@ -61,6 +63,9 @@ const proxyHandler = async (
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0) {
+      incrementMetric('retries');
+    }
     // Re-filter currently healthy in case one failed during retry loop
     const currentlyHealthy = healthyTargets.filter((url) => getHealth(url).healthy);
     if (currentlyHealthy.length === 0) {
@@ -100,11 +105,13 @@ const proxyHandler = async (
         } catch {
           console.log("");
         }
-
+        
+        incrementMetric('successfulRequests');
         return next(new ApiError(response.status, errorMessage));
       }
 
       recordSuccess(targetBaseUrl);
+      incrementMetric('successfulRequests');
       const data: unknown = await response.json();
       res.status(response.status).json(data);
       return;
@@ -114,6 +121,7 @@ const proxyHandler = async (
 
       if (error instanceof Error && error.name === 'AbortError') {
         recordFailure(targetBaseUrl);
+        incrementMetric('timeouts');
         lastError = new ApiError(504, 'Gateway Timeout: Upstream did not respond in time');
       } else if (
         error instanceof Error &&
@@ -127,6 +135,7 @@ const proxyHandler = async (
       }
 
       if (!isSafeToRetry) {
+        incrementMetric('failedRequests');
         return next(lastError);
       }
 
@@ -135,9 +144,11 @@ const proxyHandler = async (
   }
 
   if (lastError) {
+    incrementMetric('failedRequests');
     return next(lastError);
   }
 
+  incrementMetric('failedRequests');
   return next(new ApiError(503, 'Service Unavailable: All healthy targets failed during retry'));
 };
 
