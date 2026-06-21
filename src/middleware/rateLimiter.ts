@@ -3,7 +3,7 @@ import { Redis } from 'ioredis';
 
 const redis = new Redis(process.env['REDIS_URL'] ?? 'redis://localhost:6379');
 
-import { incrementMetric } from '../utils/metrics.js';
+import { incrementMetric, incrementRouteMetric } from '../utils/metrics.js';
 
 const rateLimiter = async (req: Request,res: Response,next: NextFunction,): Promise<void> => {
   const routeConfig = req.routeConfig;
@@ -25,6 +25,7 @@ const rateLimiter = async (req: Request,res: Response,next: NextFunction,): Prom
 
     if (count >= max) {
       incrementMetric('rateLimitedRequests');
+      incrementRouteMetric(routeConfig.prefix, 'rateLimited');
       res.status(429).json({success: false,error: message,retryAfter: Math.ceil(windowMs / 1000)});
       return;
     }

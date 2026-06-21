@@ -1,30 +1,29 @@
 import { Router } from 'express';
 import routes from '../config/routes.js';
 import loggerMiddleware from '../middleware/logger.js';
+import requestIdMiddleware from '../middleware/requestId.js';
 import authMiddleware from '../middleware/auth.js';
 import rateLimiter from '../middleware/rateLimiter.js';
 import proxyHandler from '../proxy/proxyHandler.js';
 import asyncHandler from '../utils/asyncHandler.js';
 import { ApiError } from '../utils/ApiError.js';
-import { initializeHealth, startHealthPolling } from '../loadbalancer/healthManager.js';
+
 import '../types/gateway.js';
 
-import { incrementMetric } from '../utils/metrics.js';
-
-initializeHealth(routes);
-startHealthPolling(routes);
+import { incrementMetric, incrementRouteMetric } from '../utils/metrics.js';
 
 const gatewayRouter = Router();
 
-gatewayRouter.use((_req, _res, next) => {
+gatewayRouter.use((req, res, next) => {
   incrementMetric('totalRequests');
   next();
 });
 
+gatewayRouter.use(requestIdMiddleware);
 gatewayRouter.use(loggerMiddleware);
 
 gatewayRouter.use(
-  asyncHandler(async (req, _res, next) => {
+  asyncHandler(async (req, res, next) => {
     const config = routes.find((r) => req.path.startsWith(r.prefix));
 
     if (!config) {
@@ -32,6 +31,7 @@ gatewayRouter.use(
     }
 
     req.routeConfig = config;
+    incrementRouteMetric(config.prefix, 'requests');
     next();
   }),
 );
