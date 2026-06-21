@@ -5,5 +5,6 @@ declare module 'express-serve-static-core' {
     routeConfig?: RouteConfig;
     user?: JwtUser;
     startTime?: number;
+    requestId?: string;
   }
 }
