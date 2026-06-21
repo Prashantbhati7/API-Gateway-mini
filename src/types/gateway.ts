@@ -4,9 +4,11 @@ export interface RateLimitConfig {
   message: string;
 }
 
+export type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+
 export interface HealthState {
-  healthy:boolean;
-  failures:number;
+  state: CircuitState;
+  failures: number;
   lastFailureTime: number | null;
 }
 

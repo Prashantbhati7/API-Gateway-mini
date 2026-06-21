@@ -1,6 +1,6 @@
 import type { RouteConfig, HealthState } from '../types/gateway.js';
 
-import { FAILURE_THRESHOLD, HEALTH_POLL_MS } from '../config/other_Configs.js';
+import { FAILURE_THRESHOLD, CIRCUIT_COOLDOWN_MS } from '../config/other_Configs.js';
 
 const targetHealth = new Map<string, HealthState>();
 
@@ -11,7 +11,7 @@ export const initializeHealth = (routes: RouteConfig[]): void => {
     for (const url of route.targets) {
       if (!targetHealth.has(url)) {
         targetHealth.set(url, {
-          healthy: true,
+          state: 'CLOSED',
           failures: 0,
           lastFailureTime: null,
         });
@@ -21,14 +21,17 @@ export const initializeHealth = (routes: RouteConfig[]): void => {
 };
 
 export const getHealth = (url: string): HealthState => {
-  return targetHealth.get(url) || { healthy: true, failures: 0, lastFailureTime: null };
+  return targetHealth.get(url) || { state: 'CLOSED', failures: 0, lastFailureTime: null };
 };
 
 export const recordSuccess = (url: string): void => {
   const state = targetHealth.get(url);
-  if (!state) return 
+  if (!state) return;
+  if (state.state === 'HALF_OPEN' || state.state === 'OPEN') {
+    console.info(`[CircuitBreaker] Target RECOVERED: ${url}. State is now CLOSED.`);
+  }
   state.failures = 0;
-  state.healthy = true;
+  state.state = 'CLOSED';
 };
 
 export const recordFailure = (url: string): void => {
@@ -38,9 +41,12 @@ export const recordFailure = (url: string): void => {
   state.failures++;
   state.lastFailureTime = Date.now();
 
-  if (state.failures >= FAILURE_THRESHOLD && state.healthy) {
-    console.warn(`[HealthManager] Target marked UNHEALTHY: ${url} (Failed ${state.failures} times)`);
-    state.healthy = false;
+  if (state.state === 'HALF_OPEN') {
+    console.warn(`[CircuitBreaker] Target failed in HALF_OPEN state: ${url}. State reverting to OPEN.`);
+    state.state = 'OPEN';
+  } else if (state.state === 'CLOSED' && state.failures >= FAILURE_THRESHOLD) {
+    console.warn(`[CircuitBreaker] Target threshold exceeded: ${url} (Failed ${state.failures} times). State is now OPEN.`);
+    state.state = 'OPEN';
   }
 };
 
@@ -58,48 +64,33 @@ export const getHealthSnapshot = (routes: RouteConfig[]): Record<string, unknown
 export const getUnhealthyCount = (): number => {
   let count = 0;
   for (const state of targetHealth.values()) {
-    if (!state.healthy) count++;
+    if (state.state !== 'CLOSED') count++;
   }
   return count;
 };
-export const startHealthPolling = (routes: RouteConfig[]): void => {
+
+export const startHealthPolling = async (routes: RouteConfig[]): Promise<void> => {
   if (pollInterval) {
     clearInterval(pollInterval);
   }
 
-  console.log(`[HealthManager] Started background recovery polling (every ${HEALTH_POLL_MS}ms)`);
+  console.log(`[CircuitBreaker] Started background cooldown manager (checking every ${CIRCUIT_COOLDOWN_MS}ms)`);
 
-  pollInterval = setInterval(async () => {
+  pollInterval = setInterval(() => {
+    const now = Date.now();
     for (const [url, state] of targetHealth.entries()) {
-      if (!state.healthy) {
-        try {
-          const pingUrl = `${url}/health`;
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 2000);
-
-          const res = await fetch(pingUrl, {
-            method: 'GET',
-            signal: controller.signal,
-          });
-          clearTimeout(timeout);
-
-          if (res.ok) {
-            console.info(`[HealthManager] Target RECOVERED: ${url}`);
-            state.healthy = true;
-            state.failures = 0;
-          }
-        } catch (err) {
-          // Still unhealthy
-        }
+      if (state.state === 'OPEN' && state.lastFailureTime && (now - state.lastFailureTime >= CIRCUIT_COOLDOWN_MS)) {
+        console.info(`[CircuitBreaker] Cooldown passed for ${url}. State is now HALF_OPEN.`);
+        state.state = 'HALF_OPEN';
       }
     }
-  }, HEALTH_POLL_MS);
+  }, CIRCUIT_COOLDOWN_MS);
 };
 
 export const stopHealthPolling = (): void => {
   if (pollInterval) {
     clearInterval(pollInterval);
     pollInterval = null;
-    console.log('[HealthManager] Stopped background recovery polling');
+    console.log('[CircuitBreaker] Stopped background cooldown manager');
   }
 };
