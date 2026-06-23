@@ -1,70 +1,151 @@
-# REALGATEWAY
+# Bastion
 
-> A production-grade API Gateway built from scratch in TypeScript — featuring Circuit Breakers, JWT Auth, Redis-backed Rate Limiting, Round-Robin Load Balancing, Request ID Propagation, and Per-Route Observability.
+> A TypeScript-based API Gateway built from scratch to understand how routing, resiliency, observability, and failure handling work in distributed systems.
+— featuring Circuit Breakers, JWT Auth, Redis-backed Rate Limiting, Round-Robin Load Balancing, Request ID Propagation, and Per-Route Observability.
+
+## Architecture
+
+```
+                         ┌──────────────────────┐
+                         │        Client        │
+                         └──────────┬───────────┘
+                                    │ HTTP Request
+                                    ▼
+                ┌───────────────────────────────────────────┐
+                │              Express Server               │
+                │                                           │
+                │   ┌────────────────────────────────────┐  │
+                │   │         /gateway/health             │  │
+                │   │         /gateway/metrics            │  │
+                │   └────────────────────────────────────┘  │
+                │                  │                        │
+                │   ┌──────────────▼─────────────────────┐  │
+                │   │           gatewayRouter             │  │
+                │   │                                     │  │
+                │   │  1. Metrics Counter                 │  │
+                │   │        ↓                            │  │
+                │   │  2. Request ID                      │  │
+                │   │     (keep or generate UUID)         │  │
+                │   │        ↓                            │  │
+                │   │  3. Logger                          │  │
+                │   │     (log [requestId] prefix)        │  │
+                │   │        ↓                            │  │
+                │   │  4. Route Matcher                   │  │
+                │   │     (find prefix → RouteConfig)     │  │
+                │   │     404 if no match                 │  │
+                │   │        ↓                            │  │
+                │   │  5. Rate Limiter ──────────────────────────► Redis
+                │   │     (skip if no ratelimit config)   │  │     (sliding window)
+                │   │     429 if limit hit                │  │
+                │   │        ↓                            │  │
+                │   │  6. Auth Middleware                 │  │
+                │   │     (skip if auth: false)           │  │
+                │   │     401 if bad/missing JWT          │  │
+                │   │        ↓                            │  │
+                │   │  7. Proxy Handler                   │  │
+                │   │     ├─ Filter targets by state      │  │
+                │   │     │  (CLOSED or HALF_OPEN only)   │  │
+                │   │     │  503 if all targets OPEN      │  │
+                │   │     │                               │  │
+                │   │     ├─ [Retry loop]                 │  │
+                │   │     │   ├─ Round Robin pick target  │  │
+                │   │     │   ├─ fetch() with timeout     │  │
+                │   │     │   ├─ success → recordSuccess  │  │
+                │   │     │   │   (HALF_OPEN → CLOSED)    │  │
+                │   │     │   └─ failure → recordFailure  │  │
+                │   │     │       (CLOSED → OPEN if ≥ N)  │  │
+                │   │     │       (HALF_OPEN → OPEN)      │  │
+                │   │     │                               │  │
+                │   │     └─ retry only safe methods      │  │
+                │   │        (GET, HEAD, OPTIONS)         │  │
+                │   └─────────────────────────────────────┘  │
+                └───────────────────────────────────────────┘
+                                    │
+              ┌─────────────────────┼─────────────────────┐
+              ▼                     ▼                     ▼
+   ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+   │   Service A      │  │   Service B      │  │   Service C      │
+   │   Instance #1    │  │   Instance #2    │  │   Instance #3    │
+   │   [CLOSED]       │  │   [OPEN]         │  │   [HALF_OPEN]    │
+   └──────────────────┘  └──────────────────┘  └──────────────────┘
 
 
+ Background Process (independent setInterval):
+ ┌──────────────────────────────────────────────────────────┐
+ │  Health Polling (every CIRCUIT_COOLDOWN_MS)              │
+ │                                                          │
+ │  For each target:                                        │
+ │    if OPEN && (now - lastFailureTime) >= cooldown        │
+ │      → promote to HALF_OPEN (allow one test request)    │
+ └──────────────────────────────────────────────────────────┘
+```
 
-                      ┌─────────────────┐
-                      │     Client      │
-                      └────────┬────────┘
-                               │
-                               ▼
-                     ┌─────────────────────┐
-                     │     API Gateway     │
-                     └─────────┬───────────┘
-                               │
-        ┌──────────────────────┼──────────────────────┐
-        │                      │                      │
-        ▼                      ▼                      ▼
- ┌────────────┐       ┌──────────────┐       ┌──────────────┐
- │   Logger   │       │ Rate Limiter │       │ JWT Auth     │
- └─────┬──────┘       └──────┬───────┘       └──────┬───────┘
-       │                     │                      │
-       └─────────────────────┼──────────────────────┘
-                             ▼
-                 ┌─────────────────────┐
-                 │   Load Balancer     │
-                 │    Round Robin      │
-                 └─────────┬───────────┘
-                           ▼
-                ┌──────────────────────┐
-                │    Proxy Handler     │
-                └─────────┬────────────┘
-                          │
-      ┌───────────────────┼───────────────────┐
-      │                   │                   │
-      ▼                   ▼                   ▼
-┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-│ Service A    │   │ Service B    │   │ Service C    │
-│ Instance #1  │   │ Instance #2  │   │ Instance #3  │
-└──────────────┘   └──────────────┘   └──────────────┘
-                          ▲
-                          │
-                 ┌───────────────────┐
-                 │ Health Manager    │
-                 │ Circuit Breaker   │
-                 └───────────────────┘
+---
+
+## Features
+
+### Routing
+* **Dynamic route matching** using configurable prefixes.
+* **Forward requests** to appropriate upstream services.
+
+### Authentication
+* **JWT Bearer token** verification.
+* **User context propagation** via headers.
+
+### Rate Limiting
+* **Redis-backed sliding window** algorithm.
+* **Per-route configuration**.
+* **Per-user / per-IP enforcement**.
+
+### Load Balancing
+* **Round Robin** distribution.
+* **Multiple service instances** per route.
+
+### Retry Logic
+* **Retries only safe HTTP methods**:
+  * `GET`
+  * `HEAD`
+  * `OPTIONS`
+* *Unsafe methods are intentionally not retried to avoid duplicate side effects.*
+
+### Circuit Breaker
+* **Supports States**:
+  * `CLOSED`
+  * `OPEN`
+  * `HALF_OPEN`
+* **Recovery Flow**:
+```
+  OPEN
+   ↓
+  Cooldown passed
+   ↓
+  HALF_OPEN
+   ↓
+  Target RECOVERED
+   ↓
+  CLOSED
+```
+* **Automatically**:
+  * Detects failing targets.
+  * Removes unhealthy targets from rotation.
+  * Tests recovery periodically.
+  * Restores recovered services.
+
+### Request Tracing
+* **Supports**:
+  * `X-Request-Id` propagation across services.
+* *Useful for debugging distributed systems.*
+
+### Observability
+* **Provides**:
+  * `GET /gateway/health`
+  * `GET /gateway/metrics`
+* *For operational visibility.*
 
 ---
 
 ## Request Lifecycle 
 ![requestflow](photos/reqLifecycle.png)
-
-## What Is This?
-
-REALGATEWAY is a custom-built API Gateway that sits in front of your microservices and handles all the cross-cutting concerns you'd otherwise have to implement in every single service:
-
-| Concern | What REALGATEWAY Does |
-|---|---|
-| **Routing** | Matches request path prefix → forwards to correct service |
-| **Load Balancing** | Round-Robin across multiple targets per route |
-| **Circuit Breaker** | Automatically stops routing to failing targets (`CLOSED → OPEN → HALF_OPEN`) |
-| **Auth** | Verifies JWT Bearer tokens before forwarding |
-| **Rate Limiting** | Per-IP, per-route sliding window limits via Redis |
-| **Retries** | Automatically retries safe methods (`GET`, `HEAD`, `OPTIONS`) on next healthy target |
-| **Request Tracing** | `X-Request-Id` propagated to all downstream services |
-| **Observability** | Global + per-route metrics exposed at `/gateway/metrics` |
-| **Health Check** | Circuit state of all targets exposed at `/gateway/health` |
 
 ---
 
@@ -193,67 +274,7 @@ npm run build
 npm start
 ```
 
----
-
-## Docker
-
-> **Note:** Docker image link will be added here.
-
-### Using Docker Compose (recommended)
-
-```yaml
-# docker-compose.yml
-version: '3.8'
-
-services:
-  gateway:
-    image: prashantbhati7/realgateway:latest   # ← paste your image here
-    ports:
-      - "3000:3000"
-    environment:
-      PORT: 3000
-      JWT_SECRET: your_super_secret_key_change_in_production
-      REDIS_URL: redis://redis:6379
-    depends_on:
-      - redis
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-```
-
-```bash
-docker compose up
-```
-
-### Build Your Own Image
-
-```dockerfile
-# Dockerfile (place at project root)
-FROM node:20-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
-
-FROM node:20-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY --from=builder /app/dist ./dist
-COPY src/.env ./dist/.env
-EXPOSE 3000
-CMD ["node", "dist/server.js"]
-```
-
-```bash
-docker build -t realgateway .
-docker run -p 3000:3000 --env-file src/.env realgateway
-```
-
----
+---------------
 
 ## API Endpoints
 
@@ -418,3 +439,5 @@ To safely retry unsafe methods, you'd add an **Idempotency Key** mechanism:
 ## Author
 
 **Prashant Bhati**
+
+Built as a learning project to understand how modern API gateways work internally.

@@ -40,11 +40,11 @@ import { getMetricsSnapshot } from './utils/metrics.js';
 import { getUnhealthyCount } from './loadbalancer/healthManager.js';
 
 app.get('/gateway/metrics', (_req: Request, res: Response) => {
-  const Services =  Object.entries(getHealthSnapshot(routes));
-  //console.log(Services);
-  Services.forEach(service=>{
-    console.log(service[1])
-  })
+  // const Services =  Object.entries(getHealthSnapshot(routes));
+  // //console.log(Services);
+  // Services.forEach(service=>{
+  //   //console.log(service[1])
+  // })
   res.json({
     ...getMetricsSnapshot(),
     unhealthyTargetsCount: getUnhealthyCount(),
